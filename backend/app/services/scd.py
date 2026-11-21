@@ -2,29 +2,50 @@ import json
 from uuid import uuid4
 
 from app.db import connect
-from app.seed import now_iso, row_hash
+from app.modules.detect_coverage_member_proof import (
+    RunNotFound,
+    assert_open_segment_allowed,
+)
+from app.seed import now_iso
 
 
 def apply_type2(detect_run_id: str):
-    """Close current hist rows and open new ones for changes in a detect run; refresh mirror."""
+    """对覆盖齐套（valid=1）跑次的 changed 成员关旧开新；刷新当前镜。
+
+    历史维写闸（detect_coverage_member_proof 架构乙）：
+    - 跑次 valid=false（缺员/范围外混入）一律拒绝开段；
+    - 只处理成员表中的 changed 成员，unchanged/skipped 永不开段；
+    - 成员必须属于本跑次范围，禁止范围外混入。
+    """
     conn = connect()
     now = now_iso()
     try:
-        run = conn.execute(
-            "SELECT * FROM detect_runs WHERE id=?", (detect_run_id,)
-        ).fetchone()
-        if not run:
-            return {"ok": False, "message": "检测跑次不存在"}
-        report = json.loads(run["report_json"])
-        changes = report.get("changes", [])
+        try:
+            assert_open_segment_allowed(conn, detect_run_id)
+        except RunNotFound as exc:
+            return {"ok": False, "message": str(exc)}
+        except PermissionError as exc:
+            return {"ok": False, "message": str(exc), "gated": "coverage_invalid"}
+
+        # 权威变更来源 = 成员表的 changed 行（不再只读 report_json 的 changes）
+        changed_members = conn.execute(
+            """
+            SELECT m.* FROM detect_run_members m
+            JOIN detect_run_scopes sc
+              ON sc.run_id=m.run_id AND sc.snapshot_id=m.snapshot_id
+            WHERE m.run_id=? AND m.kind='changed'
+            ORDER BY m.store_id, m.snapshot_id
+            """,
+            (detect_run_id,),
+        ).fetchall()
         applied = []
-        for ch in changes:
-            store_id = ch["store_id"]
+        for m in changed_members:
             snap = conn.execute(
-                "SELECT * FROM source_snapshots WHERE id=?", (ch["snapshot_id"],)
+                "SELECT * FROM source_snapshots WHERE id=?", (m["snapshot_id"],)
             ).fetchone()
             if not snap:
                 continue
+            store_id = snap["store_id"]
             cur_hist = conn.execute(
                 "SELECT * FROM dim_store_hours_hist WHERE store_id=? AND is_current=1",
                 (store_id,),

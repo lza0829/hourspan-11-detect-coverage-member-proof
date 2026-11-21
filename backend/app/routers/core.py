@@ -2,6 +2,7 @@ from fastapi import APIRouter, Body, HTTPException
 
 from app.db import connect
 from app.modules import STUBS
+from app.modules.detect_coverage_member_proof import RunNotFound, coverage_proof
 from app.services import catalog, detect, ingest, scd
 
 router = APIRouter(prefix="/api")
@@ -95,6 +96,19 @@ def detect_runs():
             "SELECT * FROM detect_runs ORDER BY created_at DESC LIMIT 50"
         ).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+@router.get("/detect-coverage")
+def detect_coverage(run_id: str | None = None):
+    """只读覆盖核证：范围数、成员数、缺员列表、run_id、valid + 成员 kind 明细。"""
+    conn = connect()
+    try:
+        try:
+            return coverage_proof(conn, run_id)
+        except RunNotFound as exc:
+            raise HTTPException(404, str(exc))
     finally:
         conn.close()
 

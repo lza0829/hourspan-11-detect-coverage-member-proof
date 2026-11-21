@@ -34,7 +34,8 @@ export default function History() {
       <div className="topbar">
         <div>
           <h1>历史维</h1>
-          <p>Type2：关旧行（valid_to + is_current=0）并开新行；与当前镜同源。</p>
+          <p>Type2：关旧行（valid_to + is_current=0）并开新行；与当前镜同源。
+            写闸：仅检测覆盖齐套（valid=true）的跑次可开段，unchanged/skipped 与缺员跑次一律拒绝。</p>
         </div>
       </div>
       <div className="panel">

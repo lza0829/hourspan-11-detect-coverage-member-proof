@@ -10,7 +10,6 @@ STUBS = [
     "weekday_mask_split",
     "open_close_order_fence",
     "hist_row_hash_proof",
-    "detect_coverage_member_proof",
     "draft_then_commit_switch",
     "concurrent_version_hold",
     "snapshot_field_allowlist",

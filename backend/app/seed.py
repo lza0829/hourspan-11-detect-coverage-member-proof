@@ -40,7 +40,33 @@ CREATE TABLE IF NOT EXISTS detect_runs (
   batch_id TEXT,
   created_at TEXT NOT NULL,
   changed_count INTEGER NOT NULL DEFAULT 0,
-  report_json TEXT NOT NULL DEFAULT '{}'
+  report_json TEXT NOT NULL DEFAULT '{}',
+  scope_count INTEGER NOT NULL DEFAULT 0,
+  member_count INTEGER NOT NULL DEFAULT 0,
+  missing_count INTEGER NOT NULL DEFAULT 0,
+  valid INTEGER NOT NULL DEFAULT 1
+);
+
+-- 检测覆盖管道（detect_coverage_member_proof · 架构乙：可落跑+失败闭）
+-- 范围表：本次检测约定应覆盖的每条入档快照（扫描水位）
+CREATE TABLE IF NOT EXISTS detect_run_scopes (
+  run_id TEXT NOT NULL,
+  snapshot_id TEXT NOT NULL,
+  store_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  PRIMARY KEY (run_id, snapshot_id)
+);
+
+-- 成员表：范围内每条快照必须且只能落一条分类 changed/unchanged/skipped
+CREATE TABLE IF NOT EXISTS detect_run_members (
+  run_id TEXT NOT NULL,
+  snapshot_id TEXT NOT NULL,
+  store_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('changed','unchanged','skipped')),
+  row_hash TEXT,
+  detail_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (run_id, snapshot_id)
 );
 
 CREATE TABLE IF NOT EXISTS dim_store_hours_hist (
@@ -103,9 +129,23 @@ def row_hash(open_time, close_time, weekday_mask, biz_status) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
+def _migrate(conn):
+    """老库补列：detect_runs 覆盖核证列（架构乙）。"""
+    have = {r["name"] for r in conn.execute("PRAGMA table_info(detect_runs)").fetchall()}
+    for col, ddl in (
+        ("scope_count", "ALTER TABLE detect_runs ADD COLUMN scope_count INTEGER NOT NULL DEFAULT 0"),
+        ("member_count", "ALTER TABLE detect_runs ADD COLUMN member_count INTEGER NOT NULL DEFAULT 0"),
+        ("missing_count", "ALTER TABLE detect_runs ADD COLUMN missing_count INTEGER NOT NULL DEFAULT 0"),
+        ("valid", "ALTER TABLE detect_runs ADD COLUMN valid INTEGER NOT NULL DEFAULT 1"),
+    ):
+        if col not in have:
+            conn.execute(ddl)
+
+
 def init_db():
     conn = connect()
     conn.executescript(SCHEMA)
+    _migrate(conn)
     if not conn.execute("SELECT 1 FROM settings WHERE key='as_of_mode'").fetchone():
         conn.execute("INSERT INTO settings(key, value) VALUES ('as_of_mode', 'business_ts')")
     if conn.execute("SELECT COUNT(*) AS c FROM stores").fetchone()["c"] == 0:
